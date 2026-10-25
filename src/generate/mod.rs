@@ -56,7 +56,7 @@ pub fn generate_replicate(
 ) -> Result<(Vec<Persona>, Vec<Trip>)> {
     let mut rng = replicate_rng(base_seed, replicate);
     let personas = personas::generate_personas(cfg, inputs, &mut rng)?;
-    let trips = trips::generate_trips(&personas, &mut rng);
+    let trips = trips::generate_trips(&personas, &inputs.pois, &mut rng)?;
     Ok((personas, trips))
 }
 
@@ -80,7 +80,7 @@ pub fn run(opts: &GenerateOptions) -> Result<GenerateReport> {
     let inputs = CityInputs::load(&city_dir)?;
 
     let input_hashes: BTreeMap<String, String> =
-        ["config.json", "housing.csv", "workplaces.csv", "campus_locations.csv"]
+        ["config.json", "housing.csv", "workplaces.csv", "campus_locations.csv", "pois.csv"]
             .iter()
             .map(|name| Ok((name.to_string(), sha256_file(&city_dir.join(name))?)))
             .collect::<Result<_>>()?;
