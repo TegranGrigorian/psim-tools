@@ -1,12 +1,9 @@
-use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use crate::tests::test_json::TestJson;
 
 // CLI tool for the "Who Is the Bus For?" project
 #[derive(Parser, Debug)]
 #[command(name = "who-is-the-bus-for", version, about = "An efficient Rust CLI", long_about = None)]
-
-// CLI structure
 pub struct Cli {
     /// Enable verbose logging
     #[arg(short, long, global = true)]
