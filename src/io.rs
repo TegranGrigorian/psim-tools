@@ -7,7 +7,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
-use crate::schema::{CampusLocation, Housing, Workplace};
+use crate::schema::{CampusLocation, Housing, Poi, Workplace};
 
 pub fn read_csv<T: DeserializeOwned>(path: &Path) -> Result<Vec<T>> {
     let mut reader = csv::Reader::from_path(path)
@@ -39,22 +39,24 @@ pub fn sha256_file(path: &Path) -> Result<String> {
     Ok(format!("sha256:{hex}"))
 }
 
-/// The three input tables for one city.
+/// The input tables for one city.
 #[derive(Debug)]
 pub struct CityInputs {
     pub housing: Vec<Housing>,
     pub workplaces: Vec<Workplace>,
     pub campus: Vec<CampusLocation>,
+    pub pois: Vec<Poi>,
 }
 
 impl CityInputs {
-    /// Reads and validates `housing.csv`, `workplaces.csv`, `campus_locations.csv`
+    /// Reads and validates `housing.csv`, `workplaces.csv`, `campus_locations.csv`, `pois.csv`
     /// from `<city_dir>`.
     pub fn load(city_dir: &Path) -> Result<Self> {
         let inputs = Self {
             housing: read_csv(&city_dir.join("housing.csv"))?,
             workplaces: read_csv(&city_dir.join("workplaces.csv"))?,
             campus: read_csv(&city_dir.join("campus_locations.csv"))?,
+            pois: read_csv(&city_dir.join("pois.csv"))?,
         };
         inputs.validate()?;
         Ok(inputs)
@@ -80,6 +82,12 @@ impl CityInputs {
                 bail!("campus {}: capacity_weight must be > 0", c.campus_id);
             }
         }
+        for p in &self.pois {
+            if p.weight <= 0.0 {
+                bail!("poi {}: weight must be > 0", p.poi_id);
+            }
+        }
+        check_unique(self.pois.iter().map(|p| p.poi_id.as_str()), "poi_id")?;
         check_unique(self.housing.iter().map(|h| h.housing_id.as_str()), "housing_id")?;
         check_unique(self.workplaces.iter().map(|w| w.workplace_id.as_str()), "workplace_id")?;
         check_unique(self.campus.iter().map(|c| c.campus_id.as_str()), "campus_id")?;
