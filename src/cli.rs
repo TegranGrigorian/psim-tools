@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use clap::{Parser, Subcommand};
+use crate::tests::test_json::TestJson;
 
 // CLI tool for the "Who Is the Bus For?" project
 #[derive(Parser, Debug)]
@@ -30,6 +31,12 @@ pub enum Commands {
         #[arg(short, long)]
         count: usize,
     },
+    /// Run built-in self tests
+    Test {
+        /// Read and write the seed in tools_config.json, then restore it
+        #[arg(long = "test_json_parse")]
+        test_json_parse: bool,
+    }
 }
 
 pub struct CommandFunctions;
@@ -46,6 +53,14 @@ impl CommandFunctions {
         println!("Generating {} personas", count);
     }
 
+    fn test(test_json_parse: bool) {
+        if test_json_parse {
+            TestJson::test_rwrw();
+        } else {
+            println!("No test selected, try --test_json_parse");
+        }
+    }
+
 
     // map commands to their respective functions, this will be dispatched in the main CLI handling logic
     pub fn capture_input(command: &Commands) {
@@ -55,6 +70,9 @@ impl CommandFunctions {
             }
             Commands::Generate { count } => {
                 Self::generate(*count);
+            }
+            Commands::Test { test_json_parse } => {
+                Self::test(*test_json_parse);
             }
         }
     }
