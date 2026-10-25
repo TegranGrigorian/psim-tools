@@ -5,3 +5,4 @@ pub mod generate;
 pub mod io;
 pub mod rng;
 pub mod schema;
+pub mod tests;
