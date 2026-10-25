@@ -96,6 +96,30 @@ pub enum Group {
     Retired,
 }
 
+impl Group {
+    /// Fixed order, so anything that iterates groups is deterministic.
+    pub const ALL: [Group; 6] = [
+        Group::Undergraduate,
+        Group::Graduate,
+        Group::UniversityStaff,
+        Group::ResidentWorker,
+        Group::ShiftWorker,
+        Group::Retired,
+    ];
+
+    /// The snake_case name used in files (and as `group_shares` keys).
+    pub fn name(self) -> &'static str {
+        match self {
+            Group::Undergraduate => "undergraduate",
+            Group::Graduate => "graduate",
+            Group::UniversityStaff => "university_staff",
+            Group::ResidentWorker => "resident_worker",
+            Group::ShiftWorker => "shift_worker",
+            Group::Retired => "retired",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgeBand {
     #[serde(rename = "18_24")]
