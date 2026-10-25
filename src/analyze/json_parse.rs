@@ -37,11 +37,9 @@ impl JsonParser {
         } else {
             serde_json::from_str(&contents)?
         };
-        if let Some(seed) = json.get("seed") {
-            if let Some(seed) = seed.as_u64() {
-                return Ok(Some(seed as u32));
-            }
-        }
-        Ok(None)
+        Ok(json
+            .get("seed")
+            .and_then(|seed| seed.as_u64())
+            .map(|seed| seed as u32))
     }
 }
