@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::schema::Group;
+
 /// Tool-level settings. Missing fields fall back to defaults.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Config {
@@ -103,6 +105,11 @@ impl CityConfig {
         if !self.gtfs.contains_key("baseline") {
             bail!("gtfs must define a `baseline` scenario");
         }
+        for key in self.group_shares.keys() {
+            if !Group::ALL.iter().any(|g| g.name() == key) {
+                bail!("group_shares has unknown group `{key}`");
+            }
+        }
         let total: f64 = self.group_shares.values().sum();
         if (total - 1.0).abs() > 1e-6 {
             bail!("group_shares must sum to 1.0, got {total}");
@@ -146,6 +153,13 @@ mod tests {
     fn shares_not_summing_to_one_fail() {
         let mut c = sample();
         c.group_shares.insert("retired".into(), 0.6);
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn unknown_group_name_fails() {
+        let mut c = sample();
+        c.group_shares.insert("commuter".into(), 0.0);
         assert!(c.validate().is_err());
     }
 
