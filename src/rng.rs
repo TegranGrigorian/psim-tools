@@ -65,7 +65,8 @@ mod tests {
             "population_size": 1000, "represented_population": 100000,
             "n_replicates": 100, "base_seed": {},
             "gtfs": {{ "baseline": ["raw/gtfs/a"] }},
-            "osm": "raw/osm.pbf", "service_date": "2026-03-10",
+            "osm": "raw/osm.pbf", "service_date": "2026-11-10",
+            "weekend_service_date": "2026-11-14",
             "departure_window_minutes": 30, "max_walk_minutes": 20, "max_trip_minutes": 120,
             "group_shares": {{ "retired": 1.0 }}
         }}"#,
