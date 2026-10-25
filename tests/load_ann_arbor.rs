@@ -11,7 +11,7 @@ fn data_dir() -> PathBuf {
 fn ann_arbor_config_loads() {
     let cfg = CityConfig::load_city(&data_dir(), "ann_arbor").unwrap();
     assert_eq!(cfg.city_slug, "ann_arbor");
-    assert_eq!(cfg.replicate_seed(0), 42);
+    assert!(cfg.persona_weight() > 1.0);
 }
 
 #[test]

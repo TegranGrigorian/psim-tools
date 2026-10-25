@@ -53,8 +53,11 @@ pub struct CityConfig {
     /// `[min_lon, min_lat, max_lon, max_lat]`
     pub bbox: [f64; 4],
     pub population_size: u32,
+    /// Real population the personas stand in for (used for persona weights).
+    pub represented_population: u32,
     pub n_replicates: u32,
-    pub base_seed: u64,
+    /// `None` means: use the CLI flag, else derive from the clock (see `rng`).
+    pub base_seed: Option<u64>,
     /// Scenario name -> GTFS folders, relative to the city folder.
     pub gtfs: BTreeMap<String, Vec<String>>,
     pub osm: String,
@@ -87,6 +90,9 @@ impl CityConfig {
         if self.population_size == 0 {
             bail!("population_size must be > 0");
         }
+        if self.represented_population < self.population_size {
+            bail!("represented_population must be >= population_size");
+        }
         if self.n_replicates == 0 {
             bail!("n_replicates must be > 0");
         }
@@ -107,9 +113,9 @@ impl CityConfig {
         Ok(())
     }
 
-    /// Seed for replicate `i`: `base_seed + i` (SCHEMA conventions).
-    pub fn replicate_seed(&self, replicate: u64) -> u64 {
-        self.base_seed + replicate
+    /// Real people each persona represents.
+    pub fn persona_weight(&self) -> f64 {
+        f64::from(self.represented_population) / f64::from(self.population_size)
     }
 }
 
@@ -121,7 +127,8 @@ mod tests {
         let text = r#"{
             "city_slug": "x", "display_name": "X", "timezone": "America/Detroit",
             "bbox": [-83.85, 42.20, -83.62, 42.34],
-            "population_size": 1000, "n_replicates": 100, "base_seed": 42,
+            "population_size": 1000, "represented_population": 100000,
+            "n_replicates": 100, "base_seed": null,
             "gtfs": { "baseline": ["raw/gtfs/a"] },
             "osm": "raw/osm.pbf", "service_date": "2026-03-10",
             "departure_window_minutes": 30, "max_walk_minutes": 20, "max_trip_minutes": 120,
@@ -157,10 +164,20 @@ mod tests {
     }
 
     #[test]
-    fn replicate_seeds_follow_base_plus_index() {
-        let c = sample();
-        assert_eq!(c.replicate_seed(0), 42);
-        assert_eq!(c.replicate_seed(99), 141);
+    fn persona_weight_scales_to_population() {
+        assert_eq!(sample().persona_weight(), 100.0);
+    }
+
+    #[test]
+    fn null_base_seed_is_none() {
+        assert_eq!(sample().base_seed, None);
+    }
+
+    #[test]
+    fn population_smaller_than_sample_fails() {
+        let mut c = sample();
+        c.represented_population = 10;
+        assert!(c.validate().is_err());
     }
 
     #[test]

@@ -194,6 +194,9 @@ pub struct Manifest {
     pub run_id: String,
     pub city_slug: String,
     pub scenario: String,
+    /// Base seed actually used (may have come from the clock). Always recorded.
+    pub base_seed: u64,
+    /// `base_seed + replicate`.
     pub seed: u64,
     pub replicate: u64,
     pub n_personas: u32,
@@ -212,6 +215,8 @@ pub struct Persona {
     pub age_band: AgeBand,
     pub income_band: IncomeBand,
     pub has_car: bool,
+    /// Real people this persona stands for: `represented_population / n_personas`.
+    pub weight: f64,
     pub neighborhood: String,
     pub home_id: String,
     pub home_lat: f64,
@@ -289,8 +294,8 @@ mod tests {
 
     #[test]
     fn persona_retired_has_empty_anchor() {
-        let text = "persona_id,group,tenure,age_band,income_band,has_car,neighborhood,home_id,home_lat,home_lon,anchor_id,anchor_type,anchor_lat,anchor_lon,shift_pattern\n\
-                    p000001,retired,own,65_plus,mid,true,burns_park,h000002,42.28,-83.74,,none,,,none\n";
+        let text = "persona_id,group,tenure,age_band,income_band,has_car,weight,neighborhood,home_id,home_lat,home_lon,anchor_id,anchor_type,anchor_lat,anchor_lon,shift_pattern\n\
+                    p000001,retired,own,65_plus,mid,true,123.851,burns_park,h000002,42.28,-83.74,,none,,,none\n";
         let rows: Vec<Persona> = read(text).unwrap();
         assert_eq!(rows[0].anchor_id, None);
         assert_eq!(rows[0].anchor_lat, None);
@@ -330,6 +335,7 @@ mod tests {
             run_id: "baseline_s0042".into(),
             city_slug: "ann_arbor".into(),
             scenario: "baseline".into(),
+            base_seed: 42,
             seed: 42,
             replicate: 0,
             n_personas: 1000,
