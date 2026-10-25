@@ -7,9 +7,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use chrono::{Datelike, NaiveDate, Weekday};
 use serde::{Deserialize, Serialize};
 
 use crate::schema::Group;
+
+fn parse_date(text: &str, field: &str) -> Result<NaiveDate> {
+    NaiveDate::parse_from_str(text, "%Y-%m-%d")
+        .with_context(|| format!("{field} `{text}` is not a YYYY-MM-DD date"))
+}
 
 /// Tool-level settings. Missing fields fall back to defaults.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -63,8 +69,10 @@ pub struct CityConfig {
     /// Scenario name -> GTFS folders, relative to the city folder.
     pub gtfs: BTreeMap<String, Vec<String>>,
     pub osm: String,
-    /// `YYYY-MM-DD`
+    /// `YYYY-MM-DD`, a school-in-session weekday (Mon-Fri). Routes mon..fri trips.
     pub service_date: String,
+    /// `YYYY-MM-DD`, a Saturday in the same period. Routes sat trips.
+    pub weekend_service_date: String,
     pub departure_window_minutes: u32,
     pub max_walk_minutes: u32,
     pub max_trip_minutes: u32,
@@ -102,6 +110,17 @@ impl CityConfig {
         if min_lon >= max_lon || min_lat >= max_lat {
             bail!("bbox must be [min_lon, min_lat, max_lon, max_lat] with min < max");
         }
+        let weekday = parse_date(&self.service_date, "service_date")?.weekday();
+        if matches!(weekday, Weekday::Sat | Weekday::Sun) {
+            bail!("service_date {} must be a weekday, got {weekday}", self.service_date);
+        }
+        let weekend = parse_date(&self.weekend_service_date, "weekend_service_date")?.weekday();
+        if weekend != Weekday::Sat {
+            bail!(
+                "weekend_service_date {} must be a Saturday, got {weekend}",
+                self.weekend_service_date
+            );
+        }
         if !self.gtfs.contains_key("baseline") {
             bail!("gtfs must define a `baseline` scenario");
         }
@@ -137,7 +156,8 @@ mod tests {
             "population_size": 1000, "represented_population": 100000,
             "n_replicates": 100, "base_seed": null,
             "gtfs": { "baseline": ["raw/gtfs/a"] },
-            "osm": "raw/osm.pbf", "service_date": "2026-03-10",
+            "osm": "raw/osm.pbf", "service_date": "2026-11-10",
+            "weekend_service_date": "2026-11-14",
             "departure_window_minutes": 30, "max_walk_minutes": 20, "max_trip_minutes": 120,
             "group_shares": { "undergraduate": 0.5, "retired": 0.5 }
         }"#;
@@ -153,6 +173,22 @@ mod tests {
     fn shares_not_summing_to_one_fail() {
         let mut c = sample();
         c.group_shares.insert("retired".into(), 0.6);
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn weekend_service_date_must_be_saturday() {
+        let mut c = sample();
+        c.weekend_service_date = "2026-11-15".into(); // Sunday
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn service_date_must_be_a_weekday() {
+        let mut c = sample();
+        c.service_date = "2026-11-14".into(); // Saturday
+        assert!(c.validate().is_err());
+        c.service_date = "not a date".into();
         assert!(c.validate().is_err());
     }
 
