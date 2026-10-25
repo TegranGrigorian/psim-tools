@@ -190,37 +190,228 @@ fn dorm_residents_rarely_have_cars() {
     assert!(owners < 0.2, "dorm car share {owners:.2}");
 }
 
+fn is_anchor_trip(t: &Trip) -> bool {
+    matches!(t.purpose, Purpose::Work | Purpose::Class)
+}
+
 #[test]
-fn trips_follow_the_routine() {
+fn trip_times_are_valid_and_required_flag_matches_purpose() {
+    let (_, _, trips) = big_sample();
+    for t in &trips {
+        let (h, m) = t.depart_time.split_once(':').unwrap();
+        assert!(h.parse::<u32>().unwrap() < 24 && m.parse::<u32>().unwrap() < 60);
+        assert_eq!(t.required, is_anchor_trip(t));
+    }
+    // ids are sequential and unique
+    for (i, t) in trips.iter().enumerate() {
+        assert_eq!(t.trip_id, format!("t{:06}", i + 1));
+    }
+}
+
+#[test]
+fn everyone_gets_work_or_class_and_shopping_trips() {
+    let (_, personas, trips) = big_sample();
+    let mut anchor: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut shopping: BTreeMap<&str, usize> = BTreeMap::new();
+    for t in &trips {
+        match t.purpose {
+            Purpose::Work | Purpose::Class => *anchor.entry(t.persona_id.as_str()).or_default() += 1,
+            Purpose::Shopping => *shopping.entry(t.persona_id.as_str()).or_default() += 1,
+            _ => {}
+        }
+    }
+    for p in &personas {
+        let id = p.persona_id.as_str();
+        if p.group == Group::Retired {
+            assert_eq!(anchor.get(id), None, "retired have no anchor trips");
+        } else {
+            assert_eq!(anchor[id], 5, "one work/class trip per weekday");
+        }
+        let n = shopping.get(id).copied().unwrap_or(0);
+        assert!((1..=2).contains(&n), "{id} has {n} shopping trips");
+    }
+}
+
+#[test]
+fn every_outbound_trip_has_a_matching_return_home() {
     let (_, personas, trips) = big_sample();
     let by_persona: BTreeMap<&str, &Persona> =
         personas.iter().map(|p| (p.persona_id.as_str(), p)).collect();
-    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    // ids are sequential, so each persona's trips are contiguous and chronological
+    let mut outbound = 0;
+    let mut returns = 0;
     for t in &trips {
-        *counts.entry(t.persona_id.as_str()).or_default() += 1;
-        // HH:MM, 24-hour
-        let (h, m) = t.depart_time.split_once(':').unwrap();
-        assert!(h.parse::<u32>().unwrap() < 24 && m.parse::<u32>().unwrap() < 60);
-        assert_eq!(t.required, matches!(t.purpose, Purpose::Work | Purpose::Class));
-    }
-    for p in &personas {
-        let n = counts.get(p.persona_id.as_str()).copied().unwrap_or(0);
-        if p.group == Group::Retired {
-            assert_eq!(n, 0, "retired personas have no v1 trips");
+        if t.purpose == Purpose::ReturnHome {
+            returns += 1;
+            let p = by_persona[t.persona_id.as_str()];
+            assert_eq!(t.dest_id, p.home_id);
+            assert_eq!((t.dest_lat, t.dest_lon), (p.home_lat, p.home_lon));
         } else {
-            assert_eq!(n, 10, "5 weekdays x (out + return)");
+            outbound += 1;
+            let p = by_persona[t.persona_id.as_str()];
+            assert_eq!((t.origin_lat, t.origin_lon), (p.home_lat, p.home_lon));
         }
     }
-    // Night workers: out in the afternoon, return the next morning.
-    let night = trips.iter().find(|t| {
-        by_persona[t.persona_id.as_str()].shift_pattern == PersonaShift::Night
-            && t.purpose == Purpose::Work
-    });
-    let night = night.expect("a night worker exists");
-    assert!(night.depart_time.as_str() >= "16:00" && night.depart_time.as_str() <= "17:00");
-    let back = trips
+    assert_eq!(outbound, returns);
+}
+
+#[test]
+fn night_workers_leave_in_the_afternoon_and_return_next_morning() {
+    let (_, personas, trips) = big_sample();
+    let night: Vec<&str> = personas
         .iter()
-        .find(|t| t.persona_id == night.persona_id && t.purpose == Purpose::ReturnHome)
-        .unwrap();
-    assert!(back.depart_time.as_str() >= "09:00" && back.depart_time.as_str() <= "10:00");
+        .filter(|p| p.shift_pattern == PersonaShift::Night)
+        .map(|p| p.persona_id.as_str())
+        .collect();
+    assert!(!night.is_empty());
+    let id = night[0];
+    let work: Vec<&Trip> = trips
+        .iter()
+        .filter(|t| t.persona_id == id && t.purpose == Purpose::Work)
+        .collect();
+    assert_eq!(work.len(), 5);
+    assert!(work.iter().all(|t| t.depart_time.as_str() >= "16:00" && t.depart_time.as_str() <= "17:00"));
+    // Friday's shift returns on Saturday morning.
+    let sat_back = trips.iter().find(|t| {
+        t.persona_id == id
+            && t.purpose == Purpose::ReturnHome
+            && t.day == psim_tools::schema::Day::Sat
+            && t.depart_time.as_str() < "10:01"
+    });
+    assert!(sat_back.is_some(), "Friday night shift should return on Saturday");
+}
+
+#[test]
+fn discretionary_trips_stay_inside_their_windows() {
+    let (_, personas, trips) = big_sample();
+    let by_persona: BTreeMap<&str, &Persona> =
+        personas.iter().map(|p| (p.persona_id.as_str(), p)).collect();
+    use psim_tools::schema::Day;
+    for t in trips.iter().filter(|t| matches!(t.purpose, Purpose::Shopping | Purpose::Medical)) {
+        let p = by_persona[t.persona_id.as_str()];
+        let time = t.depart_time.as_str();
+        // destination ids encode the POI category
+        match t.purpose {
+            Purpose::Shopping => assert!(t.dest_id.starts_with('s')),
+            _ => assert!(t.dest_id.starts_with('m')),
+        }
+        let within = |a: &str, b: &str| (a..=b).contains(&time);
+        if t.day == Day::Sat {
+            assert!(within("09:00", "17:00"));
+            if p.shift_pattern == PersonaShift::Night {
+                assert!(within("11:00", "17:00"), "night worker still commuting home at {time}");
+            }
+        } else {
+            assert_ne!(p.shift_pattern, PersonaShift::Student, "students go on Saturday only");
+            if p.group == Group::Retired {
+                assert!(within("09:00", "16:00"));
+            } else if p.shift_pattern == PersonaShift::Night {
+                assert!(within("10:30", "14:00"));
+            } else {
+                assert_eq!(t.purpose, Purpose::Shopping, "day workers see clinics on Saturday");
+                assert!(within("19:30", "21:00"));
+            }
+        }
+    }
+}
+
+#[test]
+fn retired_make_more_medical_trips_than_others() {
+    let (_, personas, trips) = big_sample();
+    let retired: BTreeMap<&str, bool> = personas
+        .iter()
+        .map(|p| (p.persona_id.as_str(), p.group == Group::Retired))
+        .collect();
+    let rate = |want_retired: bool| {
+        let n = personas.iter().filter(|p| (p.group == Group::Retired) == want_retired).count();
+        let m = trips
+            .iter()
+            .filter(|t| t.purpose == Purpose::Medical && retired[t.persona_id.as_str()] == want_retired)
+            .count();
+        m as f64 / n as f64
+    };
+    assert!(rate(true) > rate(false) * 1.4, "{} vs {}", rate(true), rate(false));
+    assert!((rate(false) - 0.08).abs() < 0.02);
+}
+
+#[test]
+fn shopping_prefers_nearby_pois() {
+    let (inputs, personas, trips) = big_sample();
+    let by_persona: BTreeMap<&str, &Persona> =
+        personas.iter().map(|p| (p.persona_id.as_str(), p)).collect();
+    let dist = |a: (f64, f64), b: (f64, f64)| {
+        let dy = (a.0 - b.0) * 111.2;
+        let dx = (a.1 - b.1) * 111.2 * a.0.to_radians().cos();
+        (dx * dx + dy * dy).sqrt()
+    };
+    let shops: Vec<_> = inputs
+        .pois
+        .iter()
+        .filter(|p| p.category == psim_tools::schema::PoiCategory::Shopping)
+        .collect();
+    let (mut chosen, mut any, mut n) = (0.0, 0.0, 0.0);
+    for t in trips.iter().filter(|t| t.purpose == Purpose::Shopping) {
+        let p = by_persona[t.persona_id.as_str()];
+        chosen += dist((p.home_lat, p.home_lon), (t.dest_lat, t.dest_lon));
+        any += shops.iter().map(|s| dist((p.home_lat, p.home_lon), (s.lat, s.lon))).sum::<f64>()
+            / shops.len() as f64;
+        n += 1.0;
+    }
+    assert!(chosen / n < 0.8 * any / n, "chosen {:.2} km vs uniform {:.2} km", chosen / n, any / n);
+}
+
+#[test]
+fn night_workers_are_home_before_their_shift_starts() {
+    let (_, personas, trips) = big_sample();
+    let night: std::collections::BTreeSet<&str> = personas
+        .iter()
+        .filter(|p| p.shift_pattern == PersonaShift::Night)
+        .map(|p| p.persona_id.as_str())
+        .collect();
+    // Weekday discretionary round trips must end before the 16:00 departure.
+    // Trips are chronological per persona: an outbound is followed by its return.
+    for pair in trips.windows(2) {
+        let (a, b) = (&pair[0], &pair[1]);
+        let discretionary = matches!(a.purpose, Purpose::Shopping | Purpose::Medical);
+        if discretionary
+            && night.contains(a.persona_id.as_str())
+            && a.day != psim_tools::schema::Day::Sat
+        {
+            assert_eq!(b.purpose, Purpose::ReturnHome);
+            assert!(b.depart_time.as_str() < "16:00", "returns {} from {}", b.depart_time, a.dest_id);
+        }
+    }
+}
+
+#[test]
+fn a_persona_is_never_in_two_places_at_once() {
+    let (_, _, trips) = big_sample();
+    // Within a persona's chronological list, every outbound trip must be home
+    // again (its return_home) before the next outbound starts.
+    let mut i = 0;
+    while i < trips.len() {
+        let id = &trips[i].persona_id;
+        let mut j = i;
+        while j < trips.len() && trips[j].persona_id == *id {
+            j += 1;
+        }
+        let mine = &trips[i..j];
+        let mut away = false;
+        let mut last_day = None;
+        for t in mine {
+            match t.purpose {
+                Purpose::ReturnHome => {
+                    // a night shift's return arrives from the previous day's trip
+                    assert!(away || t.day != psim_tools::schema::Day::Mon, "{id}: return without outbound");
+                    away = false;
+                }
+                _ => {
+                    assert!(!away || last_day != Some(t.day), "{id}: second trip on {:?} while away at {}", t.day, t.depart_time);
+                    away = true;
+                }
+            }
+            last_day = Some(t.day);
+        }
+        i = j;
+    }
 }
