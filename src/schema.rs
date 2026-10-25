@@ -156,6 +156,14 @@ pub enum Day {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum PoiCategory {
+    Shopping,
+    Medical,
+    Social,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum Purpose {
     Work,
     Class,
@@ -206,6 +214,18 @@ pub struct CampusLocation {
     pub campus_zone: CampusZone,
     /// Relative share of students attending classes here, > 0.
     pub capacity_weight: f64,
+}
+
+/// Discretionary destination (shopping, medical, ...).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Poi {
+    pub poi_id: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub name: Option<String>,
+    pub category: PoiCategory,
+    /// Relative attractiveness (size), > 0.
+    pub weight: f64,
 }
 
 // ---------------------------------------------------------------------------
