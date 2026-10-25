@@ -1,3 +1,7 @@
+use clap::Parser;
+use psim_tools::cli::{Cli, CommandFunctions};
+
 fn main() {
-    println!("Hello, world!");
+    let cli = Cli::parse();
+    CommandFunctions::capture_input(&cli.command);
 }
