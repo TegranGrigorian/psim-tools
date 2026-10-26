@@ -294,6 +294,10 @@ pub struct Trip {
     pub dest_id: String,
     /// True for work/class: a failure counts as a missed obligation.
     pub required: bool,
+    /// When the class or shift starts (`HH:MM`), for required trips only. The engine plans
+    /// the departure from this; `depart_time` is then only a nominal departure.
+    #[serde(default)]
+    pub due_time: Option<String>,
 }
 
 #[cfg(test)]
@@ -377,6 +381,7 @@ mod tests {
             dest_lon: -83.73,
             dest_id: "h000002".into(),
             required: false,
+            due_time: None,
         };
         let mut w = csv::Writer::from_writer(vec![]);
         w.serialize(&trip).unwrap();
