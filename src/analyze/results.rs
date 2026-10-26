@@ -18,6 +18,10 @@ pub struct TripResult {
     pub walk_minutes: Option<f64>,
     pub transfers: Option<f64>,
     pub breakdown_sampled: bool,
+    /// Delay model output (planned required trips in the detailed sample only)
+    pub p_on_time: Option<f64>,
+    pub delay_p95_minutes: Option<f64>,
+    pub scheduled_minutes: Option<f64>,
 }
 
 fn number(field: &Field) -> Option<f64> {
@@ -52,6 +56,9 @@ pub fn read_trip_results(path: &Path) -> Result<Vec<TripResult>> {
                 ("in_vehicle_minutes", f) => r.in_vehicle_minutes = number(f),
                 ("walk_minutes", f) => r.walk_minutes = number(f),
                 ("transfers", f) => r.transfers = number(f),
+                ("p_on_time", f) => r.p_on_time = number(f),
+                ("delay_p95_minutes", f) => r.delay_p95_minutes = number(f),
+                ("scheduled_minutes", f) => r.scheduled_minutes = number(f),
                 _ => {}
             }
         }
