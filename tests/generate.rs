@@ -270,7 +270,7 @@ fn night_workers_leave_in_the_afternoon_and_return_next_morning() {
         .filter(|t| t.persona_id == id && t.purpose == Purpose::Work)
         .collect();
     assert_eq!(work.len(), 5);
-    assert!(work.iter().all(|t| t.depart_time.as_str() >= "16:00" && t.depart_time.as_str() <= "17:00"));
+    assert!(work.iter().all(|t| t.depart_time.as_str() >= "15:30" && t.depart_time.as_str() <= "16:30"));
     // Friday's shift returns on Saturday morning.
     let sat_back = trips.iter().find(|t| {
         t.persona_id == id
@@ -306,7 +306,7 @@ fn discretionary_trips_stay_inside_their_windows() {
             if p.group == Group::Retired {
                 assert!(within("09:00", "16:00"));
             } else if p.shift_pattern == PersonaShift::Night {
-                assert!(within("10:30", "14:00"));
+                assert!(within("10:30", "13:30"));
             } else {
                 assert_eq!(t.purpose, Purpose::Shopping, "day workers see clinics on Saturday");
                 assert!(within("19:30", "21:00"));
@@ -368,7 +368,7 @@ fn night_workers_are_home_before_their_shift_starts() {
         .filter(|p| p.shift_pattern == PersonaShift::Night)
         .map(|p| p.persona_id.as_str())
         .collect();
-    // Weekday discretionary round trips must end before the 16:00 departure.
+    // Weekday discretionary round trips must end before the 15:30 departure.
     // Trips are chronological per persona: an outbound is followed by its return.
     for pair in trips.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
@@ -378,7 +378,7 @@ fn night_workers_are_home_before_their_shift_starts() {
             && a.day != psim_tools::schema::Day::Sat
         {
             assert_eq!(b.purpose, Purpose::ReturnHome);
-            assert!(b.depart_time.as_str() < "16:00", "returns {} from {}", b.depart_time, a.dest_id);
+            assert!(b.depart_time.as_str() < "15:30", "returns {} from {}", b.depart_time, a.dest_id);
         }
     }
 }
@@ -461,4 +461,43 @@ fn has_car_follows_the_acs_no_vehicle_share_when_present() {
     let non_dorm: Vec<_> = personas.iter().filter(|p| p.tenure != Tenure::Dorm).collect();
     let car = non_dorm.iter().filter(|p| p.has_car).count() as f64 / non_dorm.len() as f64;
     assert!((car - 0.75).abs() < 0.02, "car share {car:.3}");
+}
+
+#[test]
+fn only_required_trips_have_a_start_time_and_it_matches_the_routine() {
+    let (_, personas, trips) = big_sample();
+    let by_persona: BTreeMap<&str, &Persona> =
+        personas.iter().map(|p| (p.persona_id.as_str(), p)).collect();
+    let minutes = |hhmm: &str| -> u32 {
+        let (h, m) = hhmm.split_once(':').unwrap();
+        h.parse::<u32>().unwrap() * 60 + m.parse::<u32>().unwrap()
+    };
+    let (mut students, mut day, mut night) = (0, 0, 0);
+    for t in &trips {
+        match (&t.due_time, t.required) {
+            (None, false) => continue,
+            (Some(due), true) => {
+                let p = by_persona[t.persona_id.as_str()];
+                let (due_m, dep_m) = (minutes(due), minutes(&t.depart_time));
+                assert!(dep_m < due_m, "nominal departure {} must precede the start {due}", t.depart_time);
+                match p.shift_pattern {
+                    PersonaShift::Student => {
+                        assert!(due_m % 60 == 0 && (8 * 60..=15 * 60).contains(&due_m), "class start {due}");
+                        assert_eq!(due_m - dep_m, 30);
+                        students += 1;
+                    }
+                    PersonaShift::Night => {
+                        assert_eq!(due, "17:00");
+                        night += 1;
+                    }
+                    _ => {
+                        assert_eq!(due, "09:00");
+                        day += 1;
+                    }
+                }
+            }
+            other => panic!("required flag and due_time disagree: {other:?} for {}", t.trip_id),
+        }
+    }
+    assert!(students > 0 && day > 0 && night > 0);
 }
