@@ -21,12 +21,17 @@ const WEEKDAYS: [Day; 5] = [Day::Mon, Day::Tue, Day::Wed, Day::Thu, Day::Fri];
 // within a one-hour window in 5-minute steps.
 const DAY_OUT: u32 = 7 * 60 + 30; // arrive by ~09:00
 const DAY_BACK: u32 = 17 * 60; // shift ends 17:00
-const NIGHT_OUT: u32 = 16 * 60; // arrive by ~17:00
+const NIGHT_OUT: u32 = 15 * 60 + 30; // leave 15:30-16:30 for the 17:00 start
 const NIGHT_BACK: u32 = 9 * 60; // shift ends 09:00, next calendar day
 const JITTER_STEPS: u32 = 12; // 0..=12 steps of 5 minutes = one hour
-// Students: class departure varies by day, 07:30-14:00; they stay 3-8 hours.
-const CLASS_OUT_EARLIEST: u32 = 7 * 60 + 30;
-const CLASS_OUT_STEPS: u32 = 78;
+// Shift starts: 09:00 for the day shift, 17:00 for the night shift.
+const DAY_DUE: u32 = 9 * 60;
+const NIGHT_DUE: u32 = 17 * 60;
+// Students: a class starts on the hour, 08:00-15:00, a different one each day; the nominal
+// departure is 30 minutes before; they stay 3-8 hours after the start.
+const CLASS_START_FIRST: u32 = 8 * 60;
+const CLASS_START_SLOTS: u32 = 8; // 08:00 .. 15:00
+const CLASS_NOMINAL_LEAD: u32 = 30;
 const CLASS_STAY_MIN_STEPS: u32 = 36;
 const CLASS_STAY_MAX_STEPS: u32 = 96;
 const LATEST_RETURN: u32 = 22 * 60;
@@ -104,13 +109,13 @@ fn free_window(p: &Persona, kind: DayKind, category: PoiCategory) -> Option<(u32
             if retired {
                 Some((h(9, 0), h(16, 0)))
             } else if night {
-                Some((h(10, 30), h(14, 0))) // after sleeping, before the shift
+                Some((h(10, 30), h(13, 30))) // after sleeping; home by 15:00 for a 15:30 departure
             } else {
                 Some((h(19, 30), h(21, 0))) // after getting home from work
             }
         }
         // Clinics are open weekday daytime; day workers go on Saturday instead.
-        // Night workers must be home again (stay up to 3h) before leaving at 16:00.
+        // Night workers must be home again (stay up to 3h) before leaving at 15:30.
         (PoiCategory::Medical, DayKind::Weekday) => {
             if retired {
                 Some((h(9, 0), h(15, 0)))
@@ -158,6 +163,7 @@ impl PersonaTrips<'_> {
         from: (f64, f64),
         to: (f64, f64),
         dest_id: &str,
+        due: Option<u32>,
     ) {
         self.trips.push(Trip {
             trip_id: String::new(),
@@ -171,6 +177,7 @@ impl PersonaTrips<'_> {
             dest_lon: to.1,
             dest_id: dest_id.to_string(),
             required: matches!(purpose, Purpose::Work | Purpose::Class),
+            due_time: due.map(hhmm),
         });
     }
 }
@@ -191,25 +198,25 @@ fn anchor_trips<R: Rng + ?Sized>(t: &mut PersonaTrips<'_>, rng: &mut R) {
     match p.shift_pattern {
         PersonaShift::Student => {
             for day in WEEKDAYS {
-                let leave = CLASS_OUT_EARLIEST + 5 * rng.random_range(0..=CLASS_OUT_STEPS);
+                let due = CLASS_START_FIRST + 60 * rng.random_range(0..CLASS_START_SLOTS);
                 let stay = 5 * rng.random_range(CLASS_STAY_MIN_STEPS..=CLASS_STAY_MAX_STEPS);
-                let back = (leave + stay).min(LATEST_RETURN);
-                t.push(day, leave, Purpose::Class, home, anchor, anchor_id);
-                t.push(day, back, Purpose::ReturnHome, anchor, home, &p.home_id);
+                let back = (due + stay).min(LATEST_RETURN);
+                t.push(day, due - CLASS_NOMINAL_LEAD, Purpose::Class, home, anchor, anchor_id, Some(due));
+                t.push(day, back, Purpose::ReturnHome, anchor, home, &p.home_id, None);
             }
         }
         shift => {
-            let (out_base, back_base, back_next_day) = match shift {
-                PersonaShift::Night => (NIGHT_OUT, NIGHT_BACK, true),
+            let (out_base, back_base, back_next_day, due) = match shift {
+                PersonaShift::Night => (NIGHT_OUT, NIGHT_BACK, true, NIGHT_DUE),
                 // v1 has two shifts; reserved shifts fall back to the day routine.
-                _ => (DAY_OUT, DAY_BACK, false),
+                _ => (DAY_OUT, DAY_BACK, false, DAY_DUE),
             };
             let leave = jittered(out_base, rng);
             let back = jittered(back_base, rng);
             for day in WEEKDAYS {
                 let back_day = if back_next_day { next_day(day) } else { day };
-                t.push(day, leave, Purpose::Work, home, anchor, anchor_id);
-                t.push(back_day, back, Purpose::ReturnHome, anchor, home, &p.home_id);
+                t.push(day, leave, Purpose::Work, home, anchor, anchor_id, Some(due));
+                t.push(back_day, back, Purpose::ReturnHome, anchor, home, &p.home_id, None);
             }
         }
     }
@@ -254,8 +261,8 @@ fn discretionary_trip<R: Rng + ?Sized>(
         PoiCategory::Social => Purpose::Social,
         PoiCategory::Shopping => Purpose::Shopping,
     };
-    t.push(day, leave, purpose, home, (poi.lat, poi.lon), &poi.poi_id);
-    t.push(day, back, Purpose::ReturnHome, (poi.lat, poi.lon), home, &p.home_id);
+    t.push(day, leave, purpose, home, (poi.lat, poi.lon), &poi.poi_id, None);
+    t.push(day, back, Purpose::ReturnHome, (poi.lat, poi.lon), home, &p.home_id, None);
     Ok(back)
 }
 
