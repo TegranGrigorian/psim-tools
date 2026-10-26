@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use crate::analyze::{self, AnalyzeOptions};
 use crate::generate::{self, GenerateOptions};
+use crate::prepare::{self, PrepareOptions};
 use crate::tests::test_json::TestJson;
 
 // CLI tool for the "Who Is the Bus For?" project
@@ -21,6 +22,16 @@ pub struct Cli {
 // Commands enumeration and its specific arguments
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Build the input tables from downloaded public data (run fetch.sh first)
+    Prepare {
+        /// City folder name under the data directory, e.g. ann_arbor
+        #[arg(long)]
+        city: String,
+
+        /// Folder that holds one subfolder per city
+        #[arg(long, default_value = "data")]
+        data_dir: PathBuf,
+    },
     /// Summarize engine results into the files the site reads
     Analyze {
         /// City folder name under the data directory, e.g. ann_arbor
@@ -84,6 +95,13 @@ pub struct CommandFunctions;
 impl CommandFunctions {
 
     // Functions
+    fn prepare(opts: &PrepareOptions) -> Result<()> {
+        for line in prepare::run(opts)?.lines {
+            println!("{line}");
+        }
+        Ok(())
+    }
+
     fn analyze(opts: &AnalyzeOptions) -> Result<()> {
         let report = analyze::run(opts)?;
         println!(
@@ -135,6 +153,9 @@ impl CommandFunctions {
     // map commands to their respective functions, this will be dispatched in the main CLI handling logic
     pub fn capture_input(cli: &Cli) -> Result<()> {
         match &cli.command {
+            Commands::Prepare { city, data_dir } => {
+                Self::prepare(&PrepareOptions { data_dir: data_dir.clone(), city: city.clone() })?;
+            }
             Commands::Analyze { city, scenario, compare, data_dir } => {
                 let opts = AnalyzeOptions {
                     data_dir: data_dir.clone(),

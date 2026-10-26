@@ -57,7 +57,11 @@ impl Geom {
         match self {
             Geom::Point(x, y) => (*x, *y),
             Geom::Polygons(rings) => {
-                let pts: Vec<&(f64, f64)> = rings.iter().flatten().collect();
+                // A GeoJSON ring repeats its first point at the end; don't count it twice.
+                let pts: Vec<&(f64, f64)> = rings
+                    .iter()
+                    .flat_map(|r| if r.len() > 1 && r.first() == r.last() { &r[..r.len() - 1] } else { &r[..] })
+                    .collect();
                 let n = pts.len().max(1) as f64;
                 (pts.iter().map(|p| p.0).sum::<f64>() / n, pts.iter().map(|p| p.1).sum::<f64>() / n)
             }
@@ -150,7 +154,7 @@ mod tests {
         let fs = read_features(&path).unwrap();
         assert_eq!(fs.len(), 2, "line strings are skipped");
         assert_eq!(fs[0].name().as_deref(), Some("A B"));
-        assert_eq!(fs[1].geom.centroid(), (0.8, 0.8));
+        assert_eq!(fs[1].geom.centroid(), (1.0, 1.0));
         assert!(fs[1].geom.is_polygon());
         let _ = std::fs::remove_dir_all(dir);
     }

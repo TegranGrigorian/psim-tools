@@ -3,6 +3,7 @@ pub mod cli;
 pub mod config;
 pub mod generate;
 pub mod io;
+pub mod prepare;
 pub mod rng;
 pub mod schema;
 pub mod tests;
