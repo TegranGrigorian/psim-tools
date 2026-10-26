@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use crate::analyze::{self, AnalyzeOptions};
 use crate::generate::{self, GenerateOptions};
 use crate::tests::test_json::TestJson;
 
@@ -20,11 +21,23 @@ pub struct Cli {
 // Commands enumeration and its specific arguments
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Analyze transit data
+    /// Summarize engine results into the files the site reads
     Analyze {
-        /// Path to the input data file
-        #[arg(short, long, value_name = "FILE")]
-        input: String,
+        /// City folder name under the data directory, e.g. ann_arbor
+        #[arg(long)]
+        city: String,
+
+        /// Scenario to summarize (baseline, redesign_v1, ...)
+        #[arg(long, default_value = "baseline")]
+        scenario: String,
+
+        /// Also write comparison.json: this scenario against the named earlier one
+        #[arg(long)]
+        compare: Option<String>,
+
+        /// Folder that holds one subfolder per city
+        #[arg(long, default_value = "data")]
+        data_dir: PathBuf,
     },
     /// Generate simulated personas and their weekly trips
     Generate {
@@ -71,8 +84,19 @@ pub struct CommandFunctions;
 impl CommandFunctions {
 
     // Functions
-    fn analyze(input: &str) {
-        println!("Analyzing input: {}", input);
+    fn analyze(opts: &AnalyzeOptions) -> Result<()> {
+        let report = analyze::run(opts)?;
+        println!(
+            "{}: summarized {} replicate(s) -> {}",
+            opts.scenario,
+            report.replicates,
+            report.out_dir.display()
+        );
+        for (dimension, value) in &report.skipped {
+            println!("  left out {dimension}={value}: a metric had no data in any replicate");
+        }
+        println!("wrote {} file(s)", report.files.len());
+        Ok(())
     }
 
     fn generate(opts: &GenerateOptions, verbose: bool) -> Result<()> {
@@ -111,8 +135,14 @@ impl CommandFunctions {
     // map commands to their respective functions, this will be dispatched in the main CLI handling logic
     pub fn capture_input(cli: &Cli) -> Result<()> {
         match &cli.command {
-            Commands::Analyze { input } => {
-                Self::analyze(input);
+            Commands::Analyze { city, scenario, compare, data_dir } => {
+                let opts = AnalyzeOptions {
+                    data_dir: data_dir.clone(),
+                    city: city.clone(),
+                    scenario: scenario.clone(),
+                    compare: compare.clone(),
+                };
+                Self::analyze(&opts)?;
             }
             Commands::Generate {
                 city,
