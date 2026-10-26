@@ -190,6 +190,12 @@ pub struct Housing {
     /// 11-digit Census tract GEOID. Kept as a string to preserve leading zeros.
     pub tract_geoid: String,
     pub median_income_band: Option<IncomeBand>,
+    /// Share of the tract's population aged 18-24 (ACS). Weights where students live.
+    #[serde(default)]
+    pub share_18_24: Option<f64>,
+    /// Share of this tenure's households in the tract with no vehicle (ACS). Sets `has_car`.
+    #[serde(default)]
+    pub no_vehicle_share: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -309,6 +315,16 @@ mod tests {
         assert_eq!(rows[0].building_type, BuildingType::SmallMulti);
         assert_eq!(rows[0].tract_geoid, "26161400100");
         assert_eq!(rows[0].median_income_band, Some(IncomeBand::Mid));
+        assert_eq!(rows[0].share_18_24, None, "optional columns may be absent from the file");
+    }
+
+    #[test]
+    fn housing_optional_data_columns_parse_when_present() {
+        let text = "housing_id,lat,lon,tenure,building_type,units,neighborhood,tract_geoid,median_income_band,share_18_24,no_vehicle_share\n\
+                    h1,42.28,-83.74,rent,large_multi,40,t1,26161400100,low,0.45,0.2\n";
+        let rows: Vec<Housing> = read(text).unwrap();
+        assert_eq!(rows[0].share_18_24, Some(0.45));
+        assert_eq!(rows[0].no_vehicle_share, Some(0.2));
     }
 
     #[test]

@@ -415,3 +415,50 @@ fn a_persona_is_never_in_two_places_at_once() {
         i = j;
     }
 }
+
+fn housing_with(cfg_dorm_share: Option<f64>, rent_share_18_24: impl Fn(&str) -> Option<f64>) -> (Vec<Persona>, CityInputs) {
+    let (mut cfg, mut inputs) = load();
+    cfg.population_size = 20_000;
+    cfg.undergraduate_dorm_share = cfg_dorm_share;
+    for h in &mut inputs.housing {
+        h.share_18_24 = rent_share_18_24(&h.housing_id);
+    }
+    let (personas, _) = generate_replicate(&cfg, &inputs, 42, 0).unwrap();
+    (personas, inputs)
+}
+
+#[test]
+fn undergraduate_dorm_share_sets_the_dorm_fraction() {
+    let (personas, _) = housing_with(Some(0.30), |_| None);
+    let undergrads: Vec<_> = personas.iter().filter(|p| p.group == Group::Undergraduate).collect();
+    let dorm = undergrads.iter().filter(|p| p.tenure == Tenure::Dorm).count() as f64 / undergrads.len() as f64;
+    assert!((dorm - 0.30).abs() < 0.03, "dorm share {dorm:.3}");
+    assert!(undergrads.iter().all(|p| matches!(p.tenure, Tenure::Dorm | Tenure::Rent)));
+}
+
+#[test]
+fn rentals_near_young_adults_get_more_students() {
+    // two sample rentals with equal-ish units: give one a much younger tract
+    let (_, inputs) = load();
+    let rentals: Vec<&str> = inputs.housing.iter().filter(|h| h.tenure == Tenure::Rent).map(|h| h.housing_id.as_str()).collect();
+    let (young, old) = (rentals[0].to_string(), rentals[1].to_string());
+    let units = |id: &str| f64::from(inputs.housing.iter().find(|h| h.housing_id == id).unwrap().units);
+    let share = |id: &str| Some(if id == young { 0.9 } else if id == old { 0.05 } else { 0.3 });
+    let (personas, _) = housing_with(Some(0.0), share);
+    let count = |id: &str| personas.iter().filter(|p| p.group == Group::Undergraduate && p.home_id == id).count() as f64;
+    let ratio = (count(&young) / units(&young)) / (count(&old) / units(&old));
+    assert!(ratio > 8.0, "students per unit ratio young:old = {ratio:.1}, expected about 18");
+}
+
+#[test]
+fn has_car_follows_the_acs_no_vehicle_share_when_present() {
+    let (mut cfg, mut inputs) = load();
+    cfg.population_size = 20_000;
+    for h in &mut inputs.housing {
+        h.no_vehicle_share = Some(0.25);
+    }
+    let (personas, _) = generate_replicate(&cfg, &inputs, 42, 0).unwrap();
+    let non_dorm: Vec<_> = personas.iter().filter(|p| p.tenure != Tenure::Dorm).collect();
+    let car = non_dorm.iter().filter(|p| p.has_car).count() as f64 / non_dorm.len() as f64;
+    assert!((car - 0.75).abs() < 0.02, "car share {car:.3}");
+}

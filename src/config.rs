@@ -62,6 +62,10 @@ pub struct CityConfig {
     /// summary as a preview (the site shows a banner) so sample numbers can't pass as results.
     #[serde(default)]
     pub sample_data: bool,
+    /// Share of undergraduates who live in university housing (tenure `dorm`). If absent,
+    /// undergraduates pick a dorm or a rental in proportion to units.
+    #[serde(default)]
+    pub undergraduate_dorm_share: Option<f64>,
     /// `[min_lon, min_lat, max_lon, max_lat]`
     pub bbox: [f64; 4],
     pub population_size: u32,
@@ -127,6 +131,9 @@ impl CityConfig {
         }
         if !self.gtfs.contains_key("baseline") {
             bail!("gtfs must define a `baseline` scenario");
+        }
+        if self.undergraduate_dorm_share.is_some_and(|s| !(0.0..=1.0).contains(&s)) {
+            bail!("undergraduate_dorm_share must be between 0 and 1");
         }
         for key in self.group_shares.keys() {
             if !Group::ALL.iter().any(|g| g.name() == key) {

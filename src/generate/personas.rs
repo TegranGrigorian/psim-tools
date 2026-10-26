@@ -16,7 +16,8 @@ use crate::schema::{
 // ASSUMPTIONS (placeholders, replace with data when available).
 // Chance that a persona's income band differs from their home tract's band.
 const INCOME_NOISE: f64 = 0.20;
-// Chance of owning a car by income band, e.g. from ACS vehicle availability by tract.
+// Chance of owning a car by income band. Used only for homes without ACS vehicle data
+// (`no_vehicle_share`); real data replaces it.
 const CAR_LOW: f64 = 0.55;
 const CAR_MID: f64 = 0.80;
 const CAR_HIGH: f64 = 0.92;
@@ -52,6 +53,10 @@ impl Pool {
 /// Candidate homes and anchors per group, built once per replicate.
 struct Pools {
     homes_undergrad: Option<Pool>,
+    /// Only with `undergraduate_dorm_share`: undergraduates pick a dorm with that
+    /// probability, else a rental.
+    homes_undergrad_dorm: Option<Pool>,
+    homes_undergrad_rent: Option<Pool>,
     homes_grad: Option<Pool>,
     homes_other: Option<Pool>,
     campus: Option<Pool>,
@@ -69,6 +74,10 @@ impl Pools {
                 .any(|g| cfg.group_shares.get(g.name()).copied().unwrap_or(0.0) > 0.0)
         };
         let units = |h: &Housing| f64::from(h.units);
+        // Students rent where young adults already live: weight rentals by the tract's
+        // share aged 18-24 when the data has it (never to zero, so the pool stays valid).
+        let student_units = |h: &Housing| f64::from(h.units) * h.share_18_24.unwrap_or(1.0).max(0.01);
+        let split = cfg.undergraduate_dorm_share;
         let jobs = |w: &Workplace| f64::from(w.jobs);
         let opt = |needed: bool, pool: Result<Pool>| -> Result<Option<Pool>> {
             if needed { pool.map(Some) } else { Ok(None) }
@@ -83,13 +92,21 @@ impl Pools {
                 Pool::build(
                     h,
                     |x| matches!(x.tenure, Tenure::Dorm | Tenure::Rent),
-                    units,
+                    |x| if x.tenure == Tenure::Dorm { units(x) } else { student_units(x) },
                     "undergraduate homes (dorm or rent)",
                 ),
             )?,
+            homes_undergrad_dorm: opt(
+                wants(&[Undergraduate]) && split.is_some_and(|s| s > 0.0),
+                Pool::build(h, |x| x.tenure == Tenure::Dorm, units, "undergraduate dorms"),
+            )?,
+            homes_undergrad_rent: opt(
+                wants(&[Undergraduate]) && split.is_some_and(|s| s < 1.0),
+                Pool::build(h, |x| x.tenure == Tenure::Rent, student_units, "undergraduate rentals"),
+            )?,
             homes_grad: opt(
                 wants(&[Graduate]),
-                Pool::build(h, |x| x.tenure == Tenure::Rent, units, "graduate homes (rent)"),
+                Pool::build(h, |x| x.tenure == Tenure::Rent, student_units, "graduate homes (rent)"),
             )?,
             homes_other: opt(
                 wants(&[UniversityStaff, ResidentWorker, ShiftWorker, Retired]),
@@ -184,6 +201,9 @@ fn income_band<R: Rng + ?Sized>(home: &Housing, rng: &mut R) -> IncomeBand {
 fn has_car<R: Rng + ?Sized>(home: &Housing, income: IncomeBand, rng: &mut R) -> bool {
     let p = if home.tenure == Tenure::Dorm {
         CAR_DORM
+    } else if let Some(no_vehicle) = home.no_vehicle_share {
+        // ACS: share of this tenure's households in the tract with no vehicle
+        1.0 - no_vehicle.clamp(0.0, 1.0)
     } else {
         match income {
             IncomeBand::Low => CAR_LOW,
@@ -213,7 +233,14 @@ pub fn generate_personas<R: Rng + ?Sized>(
         let group = Group::ALL[rng.sample(&group_dist)];
 
         let (home_pool, is_student) = match group {
-            Group::Undergraduate => (&pools.homes_undergrad, true),
+            Group::Undergraduate => match cfg.undergraduate_dorm_share {
+                // dorm or rental first, then a home within that kind
+                Some(p) => {
+                    let dorm = rng.random_bool(p);
+                    (if dorm { &pools.homes_undergrad_dorm } else { &pools.homes_undergrad_rent }, true)
+                }
+                None => (&pools.homes_undergrad, true),
+            },
             Group::Graduate => (&pools.homes_grad, true),
             _ => (&pools.homes_other, false),
         };
