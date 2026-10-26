@@ -58,6 +58,10 @@ pub struct CityConfig {
     pub city_slug: String,
     pub display_name: String,
     pub timezone: String,
+    /// True while the input tables are invented placeholders. `analyze` then marks every
+    /// summary as a preview (the site shows a banner) so sample numbers can't pass as results.
+    #[serde(default)]
+    pub sample_data: bool,
     /// `[min_lon, min_lat, max_lon, max_lat]`
     pub bbox: [f64; 4],
     pub population_size: u32,
