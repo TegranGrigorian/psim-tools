@@ -43,11 +43,11 @@ fn metric_block(reps: &[Replicate], key: &Key) -> Option<serde_json::Map<String,
     for m in METRICS {
         block.insert(m.to_string(), iv(interval(&values_of(reps, key, m))?));
     }
-    // Not in the site's MetricKey list; null when the group has no work or class trips.
-    block.insert(
-        "required_failure_rate".to_string(),
-        interval(&values_of(reps, key, "required_failure_rate")).map_or(Value::Null, iv),
-    );
+    // Not in the site's MetricKey list; null when the group has no data for them (for example
+    // no work or class trips, or none went through the delay model).
+    for extra in ["required_failure_rate", "on_time_rate", "delay_buffer_minutes", "planned_minutes", "allow_minutes"] {
+        block.insert(extra.to_string(), interval(&values_of(reps, key, extra)).map_or(Value::Null, iv));
+    }
     Some(block)
 }
 
@@ -234,6 +234,9 @@ mod tests {
             transfers: Some(0.5),
             failure_rate: Some(fail),
             required_failure_rate: None,
+            on_time_rate: None,
+            delay_buffer_minutes: None,
+            planned_minutes: None,
         }
     }
 
