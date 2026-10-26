@@ -249,6 +249,7 @@ mod tests {
             dest_lon: 0.0,
             dest_id: "x".into(),
             required,
+            due_time: required.then(|| "09:00".to_string()),
         }
     }
 
