@@ -118,18 +118,22 @@ pub fn read_features(path: &Path) -> Result<Vec<Feature>> {
     let v: Value = serde_json::from_str(&std::fs::read_to_string(path).with_context(|| {
         format!("reading {} (run data/<city>/fetch.sh, which needs osmium)", path.display())
     })?)?;
-    Ok(v["features"]
-        .as_array()
-        .context("features array")?
-        .iter()
-        .filter_map(|f| {
-            Some(Feature {
-                id: f["id"].as_str()?.to_string(),
-                tags: f["properties"].as_object()?.clone(),
-                geom: geometry(&f["geometry"])?,
-            })
-        })
-        .collect())
+    let all = v["features"].as_array().context("features array")?;
+    // Features with a geometry type we don't use (lines) are skipped. Every other feature must
+    // have an id; the extract is made with `osmium export --add-unique-id=type_id`.
+    let mut out = Vec::new();
+    for f in all {
+        let Some(geom) = geometry(&f["geometry"]) else { continue };
+        let id = f["id"].as_str().with_context(|| {
+            format!("{}: feature without an id (export with --add-unique-id=type_id)", path.display())
+        })?;
+        out.push(Feature {
+            id: id.to_string(),
+            tags: f["properties"].as_object().cloned().unwrap_or_default(),
+            geom,
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -167,6 +171,20 @@ mod tests {
         assert!(c.contains(1.0, 2.0));
         assert!(!c.contains(3.0, 2.0));
         assert!(c.contains(3.0, 0.5));
+    }
+
+    #[test]
+    fn a_feature_without_an_id_is_an_error_not_a_silent_drop() {
+        let v = serde_json::json!({"features": [
+            {"properties": {"shop": "mall"}, "geometry": {"type": "Point", "coordinates": [1.0, 2.0]}}
+        ]});
+        let dir = std::env::temp_dir().join(format!("psim_osm_noid_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("f.geojson");
+        std::fs::write(&path, v.to_string()).unwrap();
+        let err = read_features(&path).unwrap_err().to_string();
+        assert!(err.contains("add-unique-id"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
