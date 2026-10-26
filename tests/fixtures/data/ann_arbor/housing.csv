@@ -1,0 +1,13 @@
+housing_id,lat,lon,tenure,building_type,units,neighborhood,tract_geoid,median_income_band
+h001,42.274000,-83.735000,dorm,dorm,1200,central_campus,26161400100,low
+h002,42.292500,-83.713000,dorm,dorm,1500,north_campus,26161400200,low
+h003,42.272000,-83.732000,rent,small_multi,300,central_campus,26161400100,low
+h004,42.281000,-83.756000,own,single_family,250,old_west_side,26161400300,high
+h005,42.270500,-83.727000,own,single_family,300,burns_park,26161400400,high
+h006,42.285500,-83.743500,rent,large_multi,400,kerrytown,26161400500,mid
+h007,42.298000,-83.730000,own,single_family,350,northside,26161400600,mid
+h008,42.258000,-83.745000,rent,large_multi,500,south_side,26161400700,mid
+h009,42.240000,-83.735000,rent,large_multi,450,south_side,26161400700,low
+h010,42.262000,-83.775000,own,single_family,300,west_side,26161400800,mid
+h011,42.305000,-83.690000,own,single_family,200,northeast,26161400900,high
+h012,42.268000,-83.700000,other_group,other,150,east_side,26161401000,mid

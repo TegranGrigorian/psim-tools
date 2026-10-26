@@ -1,0 +1,11 @@
+workplace_id,lat,lon,name,sector,jobs,shift_pattern,is_university
+w001,42.276500,-83.738200,University of Michigan (Central Campus),university,8000,standard_day,true
+w002,42.291000,-83.716000,University of Michigan (North Campus),university,4000,standard_day,true
+w003,42.283000,-83.728000,Michigan Medicine,healthcare,9000,night,true
+w004,42.289500,-83.713500,VA Ann Arbor Healthcare,healthcare,2500,night,false
+w005,42.230000,-83.748000,Briarwood Mall,retail_food,1800,night,false
+w006,42.280800,-83.748000,Downtown restaurants (Main St),retail_food,1500,night,false
+w007,42.280900,-83.743000,City of Ann Arbor / County offices,government,1200,standard_day,false
+w008,42.301000,-83.687000,Domino's Farms area,industry_tech,2000,standard_day,false
+w009,42.265000,-83.710000,Distribution / warehouse (southeast),industry_tech,800,night,false
+w010,42.292000,-83.745000,Ann Arbor Public Schools (Pioneer HS area),education_k12,900,standard_day,false

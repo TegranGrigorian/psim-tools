@@ -75,6 +75,26 @@ impl Geom {
         }
     }
 
+    /// Footprint in square metres (outer rings, flat-earth projection).
+    pub fn area_m2(&self) -> f64 {
+        let Geom::Polygons(rings) = self else { return 0.0 };
+        rings
+            .iter()
+            .map(|r| {
+                let lat0 = r.iter().map(|p| p.1).sum::<f64>() / r.len().max(1) as f64;
+                let (kx, ky) = (111_320.0 * lat0.to_radians().cos(), 110_540.0);
+                let pts: Vec<(f64, f64)> = r.iter().map(|p| (p.0 * kx, p.1 * ky)).collect();
+                let twice: f64 = (0..pts.len())
+                    .map(|i| {
+                        let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+                        a.0 * b.1 - b.0 * a.1
+                    })
+                    .sum();
+                twice.abs() / 2.0
+            })
+            .sum()
+    }
+
     pub fn is_polygon(&self) -> bool {
         matches!(self, Geom::Polygons(_))
     }
@@ -127,6 +147,15 @@ mod tests {
         assert!(!g.contains(5.0, 2.0));
         assert!(!g.contains(2.0, -1.0));
         assert!(!Geom::Point(1.0, 1.0).contains(1.0, 1.0));
+    }
+
+    #[test]
+    fn area_is_in_square_metres() {
+        // 0.001 degrees of latitude is about 110.5 m; of longitude at 42N about 82.7 m
+        let g = Geom::Polygons(vec![vec![(-83.0, 42.0), (-82.999, 42.0), (-82.999, 42.001), (-83.0, 42.001), (-83.0, 42.0)]]);
+        let a = g.area_m2();
+        assert!((a - 110.54 * 82.73).abs() < 80.0, "{a}");
+        assert_eq!(Geom::Point(0.0, 0.0).area_m2(), 0.0);
     }
 
     #[test]

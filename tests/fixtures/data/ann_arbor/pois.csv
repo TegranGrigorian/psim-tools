@@ -1,0 +1,16 @@
+poi_id,lat,lon,name,category,weight
+s001,42.230000,-83.748000,Briarwood Mall area,shopping,10.0
+s002,42.280800,-83.748000,Downtown Ann Arbor (Main St),shopping,8.0
+s003,42.285500,-83.743500,Kerrytown market area,shopping,4.0
+s004,42.263000,-83.712000,Washtenaw Ave / Arborland area,shopping,8.0
+s005,42.240000,-83.699000,Carpenter Rd grocery area,shopping,6.0
+s006,42.289000,-83.715000,Plymouth Rd area (north),shopping,5.0
+s007,42.273000,-83.775000,Westgate area (west side),shopping,5.0
+s008,42.262000,-83.745000,South State St / Packard area,shopping,4.0
+s009,42.274500,-83.741000,South University area,shopping,3.0
+m001,42.283000,-83.728000,Michigan Medicine (University Hospital),medical,10.0
+m002,42.301000,-83.687000,Michigan Medicine clinics (northeast),medical,6.0
+m003,42.229000,-83.747000,Michigan Medicine clinics (Briarwood area),medical,4.0
+m004,42.257500,-83.635000,St. Joseph Mercy hospital area,medical,8.0
+m005,42.289500,-83.713500,VA Ann Arbor Healthcare,medical,5.0
+m006,42.269000,-83.737000,University Health Service area,medical,2.0

@@ -10,7 +10,7 @@ use psim_tools::schema::{
 };
 
 fn data_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../data")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/data")
 }
 
 fn load() -> (CityConfig, CityInputs) {

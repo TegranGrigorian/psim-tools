@@ -160,6 +160,66 @@ pub fn workplace_rows(
 }
 
 // ---------------------------------------------------------------------------
+// University buildings
+// ---------------------------------------------------------------------------
+
+/// Splits `total` into whole numbers proportional to `weights`, summing exactly to `total`
+/// (largest-remainder method).
+pub fn distribute(total: u32, weights: &[f64]) -> Vec<u32> {
+    let sum: f64 = weights.iter().sum();
+    if weights.is_empty() || sum <= 0.0 {
+        return vec![0; weights.len()];
+    }
+    let exact: Vec<f64> = weights.iter().map(|w| f64::from(total) * w / sum).collect();
+    let mut parts: Vec<u32> = exact.iter().map(|x| x.floor() as u32).collect();
+    let mut left = total - parts.iter().sum::<u32>();
+    let mut order: Vec<usize> = (0..weights.len()).collect();
+    order.sort_by(|&a, &b| (exact[b] - exact[b].floor()).total_cmp(&(exact[a] - exact[a].floor())).then(a.cmp(&b)));
+    for i in order {
+        if left == 0 {
+            break;
+        }
+        parts[i] += 1;
+        left -= 1;
+    }
+    parts
+}
+
+/// An academic or office building on a university campus.
+#[derive(Debug, Clone)]
+pub struct CampusBuilding {
+    pub id: String,
+    pub name: Option<String>,
+    pub lon: f64,
+    pub lat: f64,
+    pub zone: CampusZone,
+    pub area_m2: f64,
+}
+
+/// Buildings inside a named campus polygon, except those the hospital runs (the hospital and its
+/// clinics are not classrooms), at least `min_m2` in footprint.
+pub fn campus_buildings(buildings: &[Feature], polygons: &[(&Feature, CampusZone)], hospital: &[&Feature], p: &PrepareParams) -> Vec<CampusBuilding> {
+    let mut out = Vec::new();
+    for b in buildings.iter().filter(|b| b.geom.is_polygon()) {
+        let area = b.geom.area_m2();
+        if area < p.min_building_m2 {
+            continue;
+        }
+        let (lon, lat) = b.geom.centroid();
+        let run_by_hospital = b.tag("operator").is_some_and(|o| o.contains(p.hospital_operator.as_str()))
+            || hospital.iter().any(|h| h.geom.contains(lon, lat));
+        if run_by_hospital {
+            continue;
+        }
+        if let Some((_, zone)) = polygons.iter().find(|(poly, _)| poly.geom.contains(lon, lat)) {
+            out.push(CampusBuilding { id: b.id.clone(), name: b.name(), lon, lat, zone: *zone, area_m2: area });
+        }
+    }
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Points of interest
 // ---------------------------------------------------------------------------
 
@@ -258,6 +318,7 @@ pub fn run(opts: &PrepareOptions) -> Result<PrepareReport> {
     let geoids: HashSet<&str> = blocks.iter().map(|b| b.geoid.as_str()).collect();
     let wac = census::read_wac(&city_dir.join(&p.wac_gz), &geoids)?;
     let features = osm::read_features(&city_dir.join(&p.osm_pois))?;
+    let buildings = osm::read_features(&city_dir.join(&p.osm_buildings))?;
     log.push(format!(
         "{}: {} blocks, {} with jobs, {} tracts in ACS, {} OSM features",
         acs.name, blocks.len(), wac.len(), tracts.len(), features.len()
@@ -286,53 +347,80 @@ pub fn run(opts: &PrepareOptions) -> Result<PrepareReport> {
         housing.len(), units(Tenure::Own), units(Tenure::Rent), units(Tenure::Dorm), units(Tenure::OtherGroup)
     ));
 
+    // Campus buildings: where classes are held and where university staff work.
+    let named_polygon = |name: &str| features.iter().find(|f| f.geom.is_polygon() && f.name().as_deref() == Some(name));
+    let polygons: Vec<(&Feature, CampusZone)> = p
+        .campus_polygons
+        .iter()
+        .map(|cp| named_polygon(&cp.name).map(|f| (f, cp.zone)).with_context(|| format!("campus polygon `{}` not found in the OSM data", cp.name)))
+        .collect::<Result<_>>()?;
+    let hospital: Vec<&Feature> = features
+        .iter()
+        .filter(|f| f.geom.is_polygon() && f.tag("operator").is_some_and(|o| o.contains(p.hospital_operator.as_str())))
+        .collect();
+    let class_buildings = campus_buildings(&buildings, &polygons, &hospital, &p);
+    if class_buildings.is_empty() {
+        bail!("no campus buildings found inside the campus polygons");
+    }
+    let area_of = |z: CampusZone| class_buildings.iter().filter(|c| c.zone == z).map(|c| c.area_m2).sum::<f64>();
+    log.push(format!(
+        "campus: {} buildings, footprint m2 central {:.0} north {:.0} athletic {:.0} other {:.0} (hospital buildings excluded)",
+        class_buildings.len(), area_of(CampusZone::Central), area_of(CampusZone::North), area_of(CampusZone::Athletic), area_of(CampusZone::Other)
+    ));
+    let areas: Vec<f64> = class_buildings.iter().map(|c| c.area_m2).collect();
+
     // Workplaces
     let by_geoid: BTreeMap<&str, &Block> = blocks.iter().map(|b| (b.geoid.as_str(), b)).collect();
     let mut workplaces = Vec::new();
+    let mut relocated = 0u32;
     for (geoid, jobs) in &wac {
         let b = by_geoid[geoid.as_str()];
-        workplaces.extend(workplace_rows(b, jobs, on_university_land(b), &p.assumptions.night_share));
+        let mut jobs = *jobs;
+        if p.university_address_blocks.contains(geoid) {
+            // LODES puts the university's jobs at its reported address; spread them over campus.
+            relocated += std::mem::take(&mut jobs[14]); // CNS15
+        }
+        workplaces.extend(workplace_rows(b, &jobs, on_university_land(b), &p.assumptions.night_share));
     }
+    let night = p.assumptions.night_share.get("university").copied().unwrap_or(0.0);
+    for (b, n) in class_buildings.iter().zip(distribute(relocated, &areas)) {
+        let night_jobs = ((f64::from(n) * night).round() as u32).min(n);
+        for (count, shift, tag) in [(n - night_jobs, ShiftPattern::StandardDay, "d"), (night_jobs, ShiftPattern::Night, "n")] {
+            if count > 0 {
+                workplaces.push(Workplace {
+                    workplace_id: format!("w{}_u_{tag}", b.id),
+                    lat: (b.lat * 1e6).round() / 1e6,
+                    lon: (b.lon * 1e6).round() / 1e6,
+                    name: b.name.clone(),
+                    sector: Sector::University,
+                    jobs: count,
+                    shift_pattern: shift,
+                    is_university: true,
+                });
+            }
+        }
+    }
+    workplaces.sort_by(|a, b| a.workplace_id.cmp(&b.workplace_id));
     let job_total: u64 = workplaces.iter().map(|w| u64::from(w.jobs)).sum();
     let univ_jobs: u64 = workplaces.iter().filter(|w| w.is_university).map(|w| u64::from(w.jobs)).sum();
     let night_jobs: u64 = workplaces.iter().filter(|w| w.shift_pattern == ShiftPattern::Night).map(|w| u64::from(w.jobs)).sum();
     log.push(format!(
-        "workplaces: {} rows, {} jobs; university {} (OBP reports 56,276 campus and hospital employees); night shift {}",
-        workplaces.len(), job_total, univ_jobs, night_jobs
+        "workplaces: {} rows, {} jobs; university {} ({} moved from the LODES address block onto {} buildings; OBP reports 56,276 campus and hospital staff); night shift {}",
+        workplaces.len(), job_total, univ_jobs, relocated, class_buildings.len(), night_jobs
     ));
 
-    // Campus locations: blocks with education jobs inside a named campus polygon.
-    let mut campus = Vec::new();
-    for (geoid, jobs) in &wac {
-        let b = by_geoid[geoid.as_str()];
-        let education = jobs[14]; // CNS15
-        if education == 0 {
-            continue;
-        }
-        let zone_of = p.campus_polygons.iter().find_map(|cp| {
-            let poly = features.iter().find(|f| f.geom.is_polygon() && f.name().as_deref() == Some(cp.name.as_str()))?;
-            poly.geom.contains(b.lon, b.lat).then(|| (cp.name.clone(), cp.zone))
-        });
-        if let Some((name, zone)) = zone_of {
-            campus.push(CampusLocation {
-                campus_id: format!("c{geoid}"),
-                lat: b.lat,
-                lon: b.lon,
-                name: Some(name),
-                campus_zone: zone,
-                capacity_weight: f64::from(education),
-            });
-        }
-    }
-    if campus.is_empty() {
-        bail!("no campus locations found: check campus_polygons names against the OSM data");
-    }
-    let by_zone = |z: CampusZone| campus.iter().filter(|c| c.campus_zone == z).map(|c| c.capacity_weight).sum::<f64>();
-    log.push(format!(
-        "campus: {} locations; education jobs central {} north {} athletic {} medical {} other {}",
-        campus.len(), by_zone(CampusZone::Central), by_zone(CampusZone::North), by_zone(CampusZone::Athletic),
-        by_zone(CampusZone::Medical), by_zone(CampusZone::Other)
-    ));
+    // Class locations: the same buildings, weighted by footprint.
+    let campus: Vec<CampusLocation> = class_buildings
+        .iter()
+        .map(|c| CampusLocation {
+            campus_id: format!("c{}", c.id),
+            lat: (c.lat * 1e6).round() / 1e6,
+            lon: (c.lon * 1e6).round() / 1e6,
+            name: c.name.clone(),
+            campus_zone: c.zone,
+            capacity_weight: c.area_m2.round().max(1.0),
+        })
+        .collect();
 
     let pois = poi_rows(&features, &p, cfg.bbox);
     let n_cat = |c: PoiCategory| pois.iter().filter(|x| x.category == c).count();
@@ -363,4 +451,137 @@ pub fn run(opts: &PrepareOptions) -> Result<PrepareReport> {
         log.push("config.json still has \"sample_data\": true. Review the numbers above, then set it to false.".to_string());
     }
     Ok(PrepareReport { lines: log })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn distribute_sums_exactly_and_follows_the_weights() {
+        let parts = distribute(100, &[1.0, 1.0, 1.0]);
+        assert_eq!(parts.iter().sum::<u32>(), 100);
+        assert_eq!(parts, vec![34, 33, 33], "remainder goes to the first of equal fractions");
+        assert_eq!(distribute(10, &[3.0, 1.0]), vec![8, 2]);
+        assert_eq!(distribute(5, &[0.0, 0.0]), vec![0, 0]);
+        assert_eq!(distribute(7, &[]), Vec::<u32>::new());
+        assert_eq!(distribute(0, &[1.0, 2.0]), vec![0, 0]);
+    }
+
+    #[test]
+    fn sectors_map_from_naics_and_campus_land() {
+        assert_eq!(sector_of(15, true), Sector::University);
+        assert_eq!(sector_of(15, false), Sector::EducationK12);
+        assert_eq!(sector_of(16, false), Sector::Healthcare);
+        assert_eq!(sector_of(18, true), Sector::RetailFood);
+        assert_eq!(sector_of(20, false), Sector::Government);
+        assert_eq!(sector_of(12, false), Sector::IndustryTech);
+        assert_eq!(sector_of(8, false), Sector::OtherService);
+    }
+
+    fn block() -> Block {
+        Block { geoid: "261610001001000".into(), tract: "26161000100".into(), lat: 42.28, lon: -83.74, pop: 100,
+                housing_units: 50, occupied_units: 40, college_housing: 0, other_group_quarters: 0 }
+    }
+
+    fn params() -> PrepareParams {
+        serde_json::from_value(json!({
+            "state": "26", "county": "161", "place": "03000", "pl_zip": "", "wac_gz": "", "acs_tracts": "", "acs_place": "",
+            "osm_pois": "", "osm_buildings": "", "university_operators": [], "hospital_operator": "Michigan Medicine",
+            "min_building_m2": 50, "university_address_blocks": [], "campus_polygons": [],
+            "assumptions": { "night_share": {"healthcare": 0.25}, "income_low_below": 50000, "income_high_from": 110000,
+                "college_housing_undergraduate_fraction": 0.85,
+                "poi_weights": {"shopping": {"supermarket": 3}, "medical": {"hospital": 10}} }
+        })).unwrap()
+    }
+
+    #[test]
+    fn a_block_splits_into_owner_and_renter_rows_by_the_tract_renter_share() {
+        let tract = Tract { renter_share: Some(0.75), median_income: Some(40000.0), no_vehicle_owner: Some(0.02),
+                            no_vehicle_renter: Some(0.2), share_18_24: Some(0.31) };
+        let rows = housing_rows(&block(), &tract, 0.5, &params());
+        assert_eq!(rows.len(), 2);
+        let own = rows.iter().find(|h| h.tenure == Tenure::Own).unwrap();
+        let rent = rows.iter().find(|h| h.tenure == Tenure::Rent).unwrap();
+        assert_eq!((own.units, rent.units), (10, 30));
+        assert_eq!(own.no_vehicle_share, Some(0.02));
+        assert_eq!(rent.no_vehicle_share, Some(0.2));
+        assert_eq!(rent.building_type, BuildingType::LargeMulti, "30 rental units is an apartment building");
+        assert_eq!(rent.median_income_band, Some(IncomeBand::Low));
+        assert_eq!(rent.neighborhood, "tract_000100");
+        assert_eq!(rent.share_18_24, Some(0.31));
+    }
+
+    #[test]
+    fn student_housing_and_group_quarters_get_their_own_rows_and_missing_acs_falls_back() {
+        let mut b = block();
+        b.college_housing = 500;
+        b.other_group_quarters = 20;
+        let rows = housing_rows(&b, &Tract::default(), 0.5, &params());
+        let dorm = rows.iter().find(|h| h.tenure == Tenure::Dorm).unwrap();
+        assert_eq!((dorm.units, dorm.building_type, dorm.no_vehicle_share), (500, BuildingType::Dorm, None));
+        assert!(rows.iter().any(|h| h.tenure == Tenure::OtherGroup && h.units == 20));
+        let rent = rows.iter().find(|h| h.tenure == Tenure::Rent).unwrap();
+        assert_eq!(rent.units, 20, "no tract data: the city renter share (0.5) is used");
+        assert_eq!(rent.median_income_band, None);
+    }
+
+    #[test]
+    fn jobs_split_into_day_and_night_rows_and_campus_retail_is_not_university() {
+        let mut jobs = [0u32; 20];
+        jobs[15] = 100; // CNS16 health care, night share 0.25
+        jobs[6] = 40; // CNS07 retail
+        let rows = workplace_rows(&block(), &jobs, true, &params().assumptions.night_share);
+        let health: Vec<_> = rows.iter().filter(|w| w.sector == Sector::Healthcare).collect();
+        assert_eq!(health.len(), 2);
+        assert_eq!(health.iter().find(|w| w.shift_pattern == ShiftPattern::Night).unwrap().jobs, 25);
+        assert_eq!(health.iter().find(|w| w.shift_pattern == ShiftPattern::StandardDay).unwrap().jobs, 75);
+        assert!(health.iter().all(|w| w.is_university), "hospital on university land");
+        assert!(rows.iter().filter(|w| w.sector == Sector::RetailFood).all(|w| !w.is_university));
+        assert_eq!(rows.iter().map(|w| w.jobs).sum::<u32>(), 140, "no jobs lost or invented");
+    }
+
+    #[test]
+    fn group_shares_sum_to_one_and_follow_the_jobs() {
+        let acs = PlaceAcs { name: "X".into(), adults: 1000.0, seniors: 150.0, undergraduates: 250.0, graduates: 100.0, renter_share: 0.5 };
+        let w = |university, shift, jobs| Workplace {
+            workplace_id: format!("{university}{jobs}"), lat: 0.0, lon: 0.0, name: None, sector: Sector::OtherService, jobs,
+            shift_pattern: shift, is_university: university,
+        };
+        // working-age adults: 1000 - 250 - 100 - 150 = 500, split 20% / 30% / 50% by jobs
+        let jobs = vec![w(true, ShiftPattern::StandardDay, 20), w(false, ShiftPattern::Night, 30), w(false, ShiftPattern::StandardDay, 50)];
+        let s = group_shares(&acs, &jobs).unwrap();
+        assert!((s.values().sum::<f64>() - 1.0).abs() < 1e-9);
+        assert_eq!(s["undergraduate"], 0.25);
+        assert_eq!(s["retired"], 0.15);
+        assert_eq!(s["university_staff"], 0.1);
+        assert_eq!(s["shift_worker"], 0.15);
+        assert_eq!(s["resident_worker"], 0.25);
+    }
+
+    #[test]
+    fn group_shares_refuse_impossible_inputs() {
+        let acs = PlaceAcs { name: "X".into(), adults: 100.0, seniors: 50.0, undergraduates: 40.0, graduates: 30.0, renter_share: 0.5 };
+        assert!(group_shares(&acs, &[]).is_err());
+    }
+
+    #[test]
+    fn pois_get_category_weight_and_stay_inside_the_bbox() {
+        let p = params();
+        let feature = |id: &str, tags: Value, x: f64, y: f64| Feature {
+            id: id.into(),
+            tags: tags.as_object().unwrap().clone(),
+            geom: osm::Geom::Point(x, y),
+        };
+        let fs = vec![
+            feature("n1", json!({"shop": "supermarket", "name": "Kroger"}), -83.7, 42.2),
+            feature("n2", json!({"amenity": "hospital"}), -83.7, 42.25),
+            feature("n3", json!({"shop": "supermarket"}), -90.0, 42.2),
+            feature("n4", json!({"shop": "bakery"}), -83.7, 42.2),
+        ];
+        let rows = poi_rows(&fs, &p, [-83.85, 42.2, -83.62, 42.34]);
+        assert_eq!(rows.len(), 2);
+        assert_eq!((rows[0].poi_id.as_str(), rows[0].category, rows[0].weight), ("mn2", PoiCategory::Medical, 10.0));
+        assert_eq!((rows[1].poi_id.as_str(), rows[1].category, rows[1].weight), ("sn1", PoiCategory::Shopping, 3.0));
+    }
 }

@@ -1,0 +1,6 @@
+campus_id,lat,lon,name,campus_zone,capacity_weight
+c001,42.276500,-83.738200,The Diag / Central Campus,central,30.0
+c002,42.274900,-83.740900,Hatcher Graduate Library,central,10.0
+c003,42.291000,-83.716000,North Campus (Pierpont Commons),north,25.0
+c004,42.283000,-83.728000,Michigan Medicine (University Hospital),medical,8.0
+c005,42.265800,-83.748700,Michigan Stadium,athletic,2.0

@@ -39,7 +39,13 @@ pub struct PrepareParams {
     pub acs_tracts: String,
     pub acs_place: String,
     pub osm_pois: String,
+    pub osm_buildings: String,
     pub university_operators: Vec<String>,
+    /// Operator of the hospital and clinics: their buildings are not classrooms or offices.
+    pub hospital_operator: String,
+    pub min_building_m2: f64,
+    /// Blocks where LODES puts the university's jobs at its reported address.
+    pub university_address_blocks: Vec<String>,
     pub campus_polygons: Vec<CampusPolygon>,
     pub assumptions: Assumptions,
 }

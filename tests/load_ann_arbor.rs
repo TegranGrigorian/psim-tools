@@ -4,7 +4,7 @@ use psim_tools::config::{CityConfig, Config};
 use psim_tools::io::CityInputs;
 
 fn data_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../data")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/data")
 }
 
 #[test]
