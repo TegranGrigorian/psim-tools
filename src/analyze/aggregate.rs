@@ -7,6 +7,11 @@
 //!   engine's detailed sample (`breakdown_sampled`); `None` if the sample has none.
 //! - `failure_rate`: share of trips that did not complete.
 //! - `required_failure_rate`: the same for work and class trips only.
+//! - `on_time_rate`: mean probability of arriving on time, over required trips whose rider
+//!   planned by the timetable and went through the delay model (the engine's sample).
+//! - `delay_buffer_minutes`: mean 95th-percentile delay over the same trips, the extra minutes to
+//!   allow beyond the timetable. `planned_minutes`: mean timetable travel time of those trips.
+//!   `allow_minutes` is their sum, how long a rider needs to allow.
 
 use std::collections::BTreeMap;
 
@@ -41,6 +46,9 @@ pub struct RepMetrics {
     pub transfers: Option<f64>,
     pub failure_rate: Option<f64>,
     pub required_failure_rate: Option<f64>,
+    pub on_time_rate: Option<f64>,
+    pub delay_buffer_minutes: Option<f64>,
+    pub planned_minutes: Option<f64>,
 }
 
 impl RepMetrics {
@@ -53,6 +61,10 @@ impl RepMetrics {
             "transfers" => self.transfers,
             "failure_rate" => self.failure_rate,
             "required_failure_rate" => self.required_failure_rate,
+            "on_time_rate" => self.on_time_rate,
+            "delay_buffer_minutes" => self.delay_buffer_minutes,
+            "planned_minutes" => self.planned_minutes,
+            "allow_minutes" => Some(self.planned_minutes? + self.delay_buffer_minutes?),
             _ => None,
         }
     }
@@ -88,6 +100,12 @@ struct Acc {
     transfers_sum: f64,
     required: u64,
     required_failed: u64,
+    planned: u64,
+    on_time_sum: f64,
+    buffer_n: u64,
+    buffer_sum: f64,
+    planned_minutes_n: u64,
+    planned_minutes_sum: f64,
 }
 
 /// A schema enum's file spelling, e.g. `Group::UniversityStaff` -> "university_staff".
@@ -140,6 +158,9 @@ fn finish(a: &Acc) -> RepMetrics {
         transfers: mean(a.transfers_sum, a.detail_n),
         failure_rate: rate(a.trips - a.completed, a.trips),
         required_failure_rate: rate(a.required_failed, a.required),
+        on_time_rate: mean(a.on_time_sum, a.planned),
+        delay_buffer_minutes: mean(a.buffer_sum, a.buffer_n),
+        planned_minutes: mean(a.planned_minutes_sum, a.planned_minutes_n),
     }
 }
 
@@ -187,6 +208,18 @@ pub fn aggregate(
                 a.required += 1;
                 if !r.completed {
                     a.required_failed += 1;
+                }
+            }
+            if let Some(p) = r.p_on_time {
+                a.planned += 1;
+                a.on_time_sum += p;
+                if let Some(b) = r.delay_p95_minutes {
+                    a.buffer_n += 1;
+                    a.buffer_sum += b;
+                }
+                if let Some(m) = r.scheduled_minutes {
+                    a.planned_minutes_n += 1;
+                    a.planned_minutes_sum += m;
                 }
             }
         }
@@ -333,6 +366,36 @@ mod tests {
         let mon8 = &r.hours[&("undergraduate".to_string(), "weekday", 8)];
         assert_eq!((mon8.trips, mon8.failed), (2, 1));
         assert_eq!((mon8.wait_n, mon8.wait_sum), (1, 4.0));
+    }
+
+    #[test]
+    fn on_time_and_buffer_come_from_trips_that_went_through_the_delay_model() {
+        let personas = vec![persona("p1", Group::Undergraduate, "campus", Tenure::Dorm)];
+        let trips = vec![
+            trip("t1", "p1", Day::Mon, "08:05", true),
+            trip("t2", "p1", Day::Tue, "08:05", true),
+            trip("t3", "p1", Day::Wed, "08:05", true),
+            trip("t4", "p1", Day::Thu, "08:05", true),
+        ];
+        let mut results: Vec<TripResult> = ["t1", "t2", "t3", "t4"].iter().map(|id| result(id, true, 20.0, None)).collect();
+        results[0].p_on_time = Some(0.5);
+        results[0].delay_p95_minutes = Some(12.0);
+        results[0].scheduled_minutes = Some(20.0);
+        results[1].p_on_time = Some(0.0); // could not be planned: counts as late, has no buffer or time
+        // t3 and t4 were never sampled
+        let r = aggregate(1, &results, &personas, &trips).unwrap();
+        let m = g(&r, "group", "undergraduate");
+        assert_eq!(m.on_time_rate, Some(0.25), "mean of 0.5 and 0.0, the unplannable trip included");
+        assert_eq!(m.delay_buffer_minutes, Some(12.0));
+        assert_eq!(m.planned_minutes, Some(20.0));
+        assert_eq!(m.get("allow_minutes"), Some(32.0));
+    }
+
+    #[test]
+    fn a_group_nobody_planned_has_no_on_time_numbers() {
+        let r = sample();
+        let u = g(&r, "group", "undergraduate");
+        assert_eq!((u.on_time_rate, u.delay_buffer_minutes, u.get("allow_minutes")), (None, None, None));
     }
 
     #[test]
